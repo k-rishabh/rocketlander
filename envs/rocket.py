@@ -10,7 +10,7 @@ import utils
 
 class Rocket(object):
     """
-    Rocekt and environment.
+    Rocket and environment.
     The rocket is simplified into a rigid body model with a thin rod,
     considering acceleration and angular acceleration and air resistance
     proportional to velocity.
@@ -70,7 +70,6 @@ class Rocket(object):
         self.max_phi = 30 / 180 * np.pi
 
         self.state_dims = 8
-        # self.action_dims = len(self.action_table)
 
         if path_to_bg_img is None:
             path_to_bg_img = os.path.join(DIR_PATH, task+'.jpg')
@@ -125,9 +124,7 @@ class Rocket(object):
 
         state = {
             'x': x, 'y': y, 'vx': 0, 'vy': vy,
-            'theta': theta, 'vtheta': 0,
-            'phi': 0, 'f': 0,
-            't': 0, 'a_': 0
+            'theta': theta, 'vtheta': 0, 'phi': 0
         }
 
         return state
@@ -246,9 +243,7 @@ class Rocket(object):
 
         self.state = {
             'x': x_new, 'y': y_new, 'vx': vx_new, 'vy': vy_new,
-            'theta': theta_new, 'vtheta': vtheta_new,
-            'phi': phi, 'f': f,
-            't': self.step_id
+            'theta': theta_new, 'vtheta': vtheta_new, 'phi': phi
         }
         self.state_buffer.append(self.state)
 
@@ -265,8 +260,7 @@ class Rocket(object):
 
     def flatten(self, state):
         x = [state['x'], state['y'], state['vx'], state['vy'],
-             state['theta'], state['vtheta'], state['t'],
-             state['phi']]
+             state['theta'], state['vtheta'], state['phi']]
         return np.array(x, dtype=np.float32)/100.
 
     def render(self, window_name='env', wait_time=1,
