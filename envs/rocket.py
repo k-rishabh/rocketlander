@@ -1,8 +1,12 @@
 import numpy as np
 import random
 import cv2
-import utils
+import os
+import sys
 
+DIR_PATH = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(DIR_PATH)
+import utils
 
 class Rocket(object):
     """
@@ -29,7 +33,7 @@ class Rocket(object):
 
     def __init__(self, max_steps, task='hover', rocket_type='falcon',
                  viewport_h=768, path_to_bg_img=None):
-
+        
         self.task = task
         self.rocket_type = rocket_type
 
@@ -60,20 +64,22 @@ class Rocket(object):
         self.step_id = 0
 
         self.state = self.create_random_state()
-        self.action_table = self.create_action_table()
+        self.min_thrust = 0
+        self.max_thrust = 2.0 * self.g
+        self.min_phi = -30 / 180 * np.pi
+        self.max_phi = 30 / 180 * np.pi
 
         self.state_dims = 8
-        self.action_dims = len(self.action_table)
+        # self.action_dims = len(self.action_table)
 
         if path_to_bg_img is None:
-            path_to_bg_img = task+'.jpg'
+            path_to_bg_img = os.path.join(DIR_PATH, task+'.jpg')
         self.bg_img = utils.load_bg_img(path_to_bg_img, w=self.viewport_w, h=self.viewport_h)
 
         self.state_buffer = []
 
 
     def reset(self, state_dict=None):
-
         if state_dict is None:
             self.state = self.create_random_state()
         else:
@@ -85,22 +91,14 @@ class Rocket(object):
         cv2.destroyAllWindows()
         return self.flatten(self.state)
 
-    def create_action_table(self):
-        f0 = 0.2 * self.g  # thrust
-        f1 = 1.0 * self.g
-        f2 = 2 * self.g
-        vphi0 = 0  # Nozzle angular velocity
-        vphi1 = 30 / 180 * np.pi
-        vphi2 = -30 / 180 * np.pi
-
-        action_table = [[f0, vphi0], [f0, vphi1], [f0, vphi2],
-                        [f1, vphi0], [f1, vphi1], [f1, vphi2],
-                        [f2, vphi0], [f2, vphi1], [f2, vphi2]
-                        ]
-        return action_table
-
     def get_random_action(self):
-        return random.randint(0, len(self.action_table)-1)
+        """
+        Returns an array of [thrust, nozzle angular velocity]
+        Thrust varies from 0 to 2 G's
+        Nozze Angular Velocity varies form -30 to +30 degrees
+        """
+        return [random.uniform(0.0, 2.0), 
+                random.uniform(-30.0, 30.0)]
 
     def create_random_state(self):
 
@@ -218,7 +216,9 @@ class Rocket(object):
         theta, vtheta = self.state['theta'], self.state['vtheta']
         phi = self.state['phi']
 
-        f, vphi = self.action_table[action]
+        f, vphi = action
+        f = min(max(f * self.g, self.min_thrust), self.max_thrust)
+        vphi = min(max(vphi / 180 * np.pi, self.min_phi), self.max_phi)
 
         ft, fr = -f*np.sin(phi), f*np.cos(phi)
         fx = ft*np.cos(theta) - fr*np.sin(theta)
@@ -232,7 +232,6 @@ class Rocket(object):
         if self.already_landing:
             vx, vy, ax, ay, theta, vtheta, atheta = 0, 0, 0, 0, 0, 0, 0
             phi, f = 0, 0
-            action = 0
 
         self.step_id += 1
         x_new = x + vx*self.dt + 0.5 * ax * (self.dt**2)
@@ -242,14 +241,14 @@ class Rocket(object):
         vtheta_new = vtheta + atheta * self.dt
         phi = phi + self.dt*vphi
 
-        phi = max(phi, -20/180*3.1415926)
-        phi = min(phi, 20/180*3.1415926)
+        phi = max(phi, -20/180*np.pi)
+        phi = min(phi, 20/180*np.pi)
 
         self.state = {
             'x': x_new, 'y': y_new, 'vx': vx_new, 'vy': vy_new,
             'theta': theta_new, 'vtheta': vtheta_new,
             'phi': phi, 'f': f,
-            't': self.step_id, 'action_': action
+            't': self.step_id
         }
         self.state_buffer.append(self.state)
 
