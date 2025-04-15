@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import pickle
+from datetime import datetime
 
 torch.set_default_dtype(torch.float64)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -166,7 +168,10 @@ for i in range(2000):
     if np.average(reward_records[-50:]) > 475.0:
         break
 
-env.close()
+# env.close()
+# pickling model
+pickle.dump(pi_model, open("models/sac_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+, 'wb'))
 print("\nDone")
 
 import matplotlib.pyplot as plt
