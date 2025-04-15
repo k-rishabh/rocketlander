@@ -69,7 +69,8 @@ class Rocket(object):
         self.min_phi = -30 / 180 * np.pi
         self.max_phi = 30 / 180 * np.pi
 
-        self.state_dims = 8
+        self.state_dims = 7
+        self.action_dims = 2
 
         if path_to_bg_img is None:
             path_to_bg_img = os.path.join(DIR_PATH, task+'.jpg')

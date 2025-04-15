@@ -13,6 +13,7 @@ env = Rocket(task="landing", max_steps=1000)
 # Hyperparameters
 alpha = 0.1
 tau = 0.002
+batch_size = 256
 
 # Policy Network (pi_theta)
 class PolicyNet(nn.Module):
@@ -81,7 +82,7 @@ opt_q2 = torch.optim.AdamW(q_origin_model2.parameters(), lr=0.0005)
 
 def optimize_phi(states, actions, rewards, next_states, dones):
     states = torch.tensor(states, dtype=torch.float64).to(device)
-    actions = torch.from_numpy(actions).to(device)
+    actions = torch.from_numpy(actions).to(device=device, dtype=torch.float64)
     rewards = torch.tensor(rewards, dtype=torch.float64).unsqueeze(1).to(device)
     next_states = torch.tensor(next_states, dtype=torch.float64).to(device)
     dones = torch.tensor(dones, dtype=torch.float64).unsqueeze(1).to(device)
@@ -137,8 +138,6 @@ class ReplayBuffer:
         return len(self.buffer)
 
 buffer = ReplayBuffer(20000)
-
-batch_size = 250
 
 reward_records = []
 for i in range(2000):
