@@ -64,6 +64,7 @@ class Rocket(object):
         self.step_id = 0
 
         self.state = self.create_random_state()
+        self.action = self.get_random_action()
         self.min_thrust = 0
         self.max_thrust = 2.0 * self.g
         self.min_phi = -30 / 180 * np.pi
@@ -247,6 +248,7 @@ class Rocket(object):
             'theta': theta_new, 'vtheta': vtheta_new, 'phi': phi
         }
         self.state_buffer.append(self.state)
+        self.action = action
 
         self.already_landing = self.check_landing_success(self.state)
         self.already_crash = self.check_crash(self.state)
@@ -398,7 +400,7 @@ class Rocket(object):
                                       'from (falcon, starship)' % self.rocket_type)
 
         # engine work
-        f, phi = self.state['f'], self.state['phi']
+        f, phi = self.action[0], self.state['phi']
         c, s = np.cos(phi), np.sin(phi)
 
         if f > 0 and f < 0.5 * self.g:
