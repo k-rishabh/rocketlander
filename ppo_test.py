@@ -44,7 +44,7 @@ def test():
 
     # Pretrained weights directory
     random_seed = 0             # Set this to load a specific checkpoint trained on a random seed
-    run_num_pretrained = 1      # Set this to load a specific checkpoint number
+    run_num_pretrained = 4      # Set this to load a specific checkpoint number
 
     directory = "PPO_preTrained" + '/' + env_name + '/'
     checkpoint_path = directory + "PPO_{}_{}_{}.pth".format(env_name, random_seed, run_num_pretrained)
