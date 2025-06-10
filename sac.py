@@ -1,188 +1,137 @@
-import random
-from envs.rocket import Rocket
-import numpy as np
+# sac.py
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import pickle
-from datetime import datetime
+import numpy as np
+import os
 
-torch.set_default_dtype(torch.float64)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("=" * 90)
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+print(f"Device set to : {device}")
+print("=" * 90)
 
-env = Rocket(task="landing", max_steps=1000)
+torch.set_default_dtype(torch.float32)
 
-# Hyperparameters
-alpha = 0.1
-tau = 0.002
-batch_size = 256
-
-# Policy Network (pi_theta)
 class PolicyNet(nn.Module):
-    def __init__(self, hidden_dim=64):
+    def __init__(self, state_dim, action_dim, hidden_dim=64):
         super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, action_dim),
+            nn.Tanh()
+        )
 
-        self.hidden = nn.Linear(7, hidden_dim)
-        self.output = nn.Linear(hidden_dim, 2)
+    def forward(self, state):
+        return self.net(state)
 
-    def forward(self, s):
-        outs = self.hidden(s)
-        outs = F.tanh(outs)
-        outs = self.output(outs)
-        return outs
-
-# Q-Value Function
 class QNet(nn.Module):
-    def __init__(self, hidden_dim=64):
+    def __init__(self, state_dim, action_dim, hidden_dim=64):
         super().__init__()
-
-        self.hidden = nn.Linear(9, hidden_dim)
-        self.output = nn.Linear(hidden_dim, 2)
-
-    def forward(self, s, a):
-        x = torch.cat([s, a], dim=-1)
-        x = F.relu(self.hidden(x))
-        return self.output(x)
-
-pi_model = PolicyNet().to(device)
-q_origin_model1 = QNet().to(device)  # Q_phi1
-q_origin_model2 = QNet().to(device)  # Q_phi2
-q_target_model1 = QNet().to(device)  # Q_phi1'
-q_target_model2 = QNet().to(device)  # Q_phi2'
-_ = q_target_model1.requires_grad_(False)  # target model doen't need grad
-_ = q_target_model2.requires_grad_(False)  # target model doen't need grad
-
-# Pick up action (for each step in episode)
-def pick_sample(s):
-    with torch.no_grad():
-        s_batch = np.expand_dims(s, axis=0)  # (1, 7)
-        s_batch = torch.tensor(s_batch, dtype=torch.float64).to(device)
-
-        action = pi_model(s_batch)          # shape: (1, action_dim)
-        action = action.squeeze(dim=0)      # shape: (action_dim,)
-        action[0] += 1                      # thrust lies between 0.0 and 2.0
-        action[1] *= 30                     # gimbal lies between -30 and 30
-        return action.cpu().numpy()         # convert to NumPy array
-
-
-opt_pi = torch.optim.AdamW(pi_model.parameters(), lr=0.0005)
-
-def optimize_theta(states):
-    states = torch.tensor(states, dtype=torch.float64).to(device)
-    actions = pi_model(states)
-    q_values = q_origin_model1(states, actions)
-    loss = -q_values.mean()
-
-    opt_pi.zero_grad()
-    loss.backward()
-    opt_pi.step()
-
-gamma = 0.99
-
-opt_q1 = torch.optim.AdamW(q_origin_model1.parameters(), lr=0.0005)
-opt_q2 = torch.optim.AdamW(q_origin_model2.parameters(), lr=0.0005)
-
-def optimize_phi(states, actions, rewards, next_states, dones):
-    states = torch.tensor(states, dtype=torch.float64).to(device)
-    actions = torch.from_numpy(actions).to(device=device, dtype=torch.float64)
-    rewards = torch.tensor(rewards, dtype=torch.float64).unsqueeze(1).to(device)
-    next_states = torch.tensor(next_states, dtype=torch.float64).to(device)
-    dones = torch.tensor(dones, dtype=torch.float64).unsqueeze(1).to(device)
-
-    # Compute target Q
-    with torch.no_grad():
-        next_actions = pi_model(next_states)
-        q1_next = q_target_model1(next_states, next_actions)
-        q2_next = q_target_model2(next_states, next_actions)
-        q_min = torch.min(q1_next, q2_next)
-        q_target = rewards + gamma * (1.0 - dones) * q_min
-
-    # Update Q1
-    q1_pred = q_origin_model1(states, actions)
-    loss1 = F.mse_loss(q1_pred, q_target)
-    opt_q1.zero_grad()
-    loss1.backward()
-    opt_q1.step()
-
-    # Update Q2
-    q2_pred = q_origin_model2(states, actions)
-    loss2 = F.mse_loss(q2_pred, q_target)
-    opt_q2.zero_grad()
-    loss2.backward()
-    opt_q2.step()
-
-def update_target():
-    for var, var_target in zip(q_origin_model1.parameters(), q_target_model1.parameters()):
-        var_target.data = tau * var.data + (1.0 - tau) * var_target.data
-    for var, var_target in zip(q_origin_model2.parameters(), q_target_model2.parameters()):
-        var_target.data = tau * var.data + (1.0 - tau) * var_target.data
+        self.net = nn.Sequential(
+            nn.Linear(state_dim + action_dim, 64),
+            nn.Tanh(),
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+    def forward(self, state, action):
+        return self.net(torch.cat([state, action], dim=-1))
 
 class ReplayBuffer:
-    def __init__(self, buffer_size: int):
-        self.buffer_size = buffer_size
+    def __init__(self, max_size):
         self.buffer = []
+        self.max_size = max_size
 
-    def add(self, item):
-        if len(self.buffer) == self.buffer_size:
+    def add(self, experience):
+        if len(self.buffer) >= self.max_size:
             self.buffer.pop(0)
-        self.buffer.append(item)
+        self.buffer.append(experience)
 
     def sample(self, batch_size):
-        items = random.sample(self.buffer, batch_size)
-        states   = [i[0] for i in items]
-        actions  = [i[1] for i in items]
-        rewards  = [i[2] for i in items]
-        n_states = [i[3] for i in items]
-        dones    = [i[4] for i in items]
-        return states, actions, rewards, n_states, dones
+        indices = np.random.choice(len(self.buffer), size=batch_size, replace=False)
+        batch = [self.buffer[i] for i in indices]
+        states, actions, rewards, next_states, dones = zip(*batch)
+        return (np.array(states), np.array(actions), np.array(rewards), np.array(next_states), np.array(dones))
 
-    def length(self):
+    def size(self):
         return len(self.buffer)
 
-buffer = ReplayBuffer(20000)
+class SAC:
+    def __init__(self, state_dim, action_dim, lr_actor=3e-4, lr_critic=3e-4, gamma=0.99, tau=0.005):
+        self.gamma = gamma
+        self.tau = tau
 
-reward_records = []
-for i in range(2000):
-    # Run episode till done
-    s = env.reset()
-    done = False
-    cum_reward = 0
-    while not done:
-        a = pick_sample(s)
-        s_next, r, done, _ = env.step(a)
-        buffer.add([s.tolist(), a, r, s_next.tolist(), float(done)])
-        cum_reward += r
-        if buffer.length() >= batch_size:
-            states, actions, rewards, n_states, dones = buffer.sample(batch_size)
-            actions = np.array(actions)
-            optimize_theta(states)
-            optimize_phi(states, actions, rewards, n_states, dones)
-            update_target()
-        s = s_next
+        self.actor = PolicyNet(state_dim, action_dim).to(device)
+        self.q1 = QNet(state_dim, action_dim).to(device)
+        self.q2 = QNet(state_dim, action_dim).to(device)
+        self.q1_target = QNet(state_dim, action_dim).to(device)
+        self.q2_target = QNet(state_dim, action_dim).to(device)
 
-    # Output total rewards in episode (max 500)
-    print("Running episode {} with rewards {}".format(i, cum_reward), end="\r")
-    reward_records.append(cum_reward)
+        self.q1_target.load_state_dict(self.q1.state_dict())
+        self.q2_target.load_state_dict(self.q2.state_dict())
 
-    # stop if reward mean > 475.0
-    if np.average(reward_records[-50:]) > 475.0:
-        break
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr_actor)
+        self.q1_optimizer = torch.optim.Adam(self.q1.parameters(), lr=lr_critic)
+        self.q2_optimizer = torch.optim.Adam(self.q2.parameters(), lr=lr_critic)
 
-# env.close()
-# pickling model
-pickle.dump(pi_model, open("models/sac_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-, 'wb'))
-print("\nDone")
+    def select_action(self, state):
+        state = torch.FloatTensor(state).unsqueeze(0).to(device)
+        with torch.no_grad():
+            raw_action = self.actor(state).cpu().numpy()[0]
 
-import matplotlib.pyplot as plt
-# Generate recent 50 interval average
-average_reward = []
-for idx in range(len(reward_records)):
-    avg_list = np.empty(shape=(1,), dtype=int)
-    if idx < 50:
-        avg_list = reward_records[:idx+1]
-    else:
-        avg_list = reward_records[idx-49:idx+1]
-    average_reward.append(np.average(avg_list))
-plt.plot(reward_records)
-plt.plot(average_reward)
+        # Add exploration noise (temporary fix)
+        noise = np.random.normal(0, 0.1, size=raw_action.shape)
+        raw_action += noise
+
+        # Rescale action: thrust in [0, 2], gimbal in [-30, 30]
+        action = np.zeros_like(raw_action)
+        action[0] = np.clip(raw_action[0] + 1, 0.0, 2.0)
+        action[1] = np.clip(raw_action[1] * 30, -30.0, 30.0)
+
+        return action
+
+    def update(self, replay_buffer, batch_size=256):
+        states, actions, rewards, next_states, dones = replay_buffer.sample(batch_size)
+
+        states = torch.FloatTensor(states).to(device)
+        actions = torch.FloatTensor(actions).to(device)
+        rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device)
+        next_states = torch.FloatTensor(next_states).to(device)
+        dones = torch.FloatTensor(dones).unsqueeze(1).to(device)
+
+        with torch.no_grad():
+            next_actions = self.actor(next_states)
+            q1_next = self.q1_target(next_states, next_actions)
+            q2_next = self.q2_target(next_states, next_actions)
+            q_target = rewards + self.gamma * (1 - dones) * torch.min(q1_next, q2_next)
+
+        q1_loss = F.mse_loss(self.q1(states, actions), q_target)
+        q2_loss = F.mse_loss(self.q2(states, actions), q_target)
+
+        self.q1_optimizer.zero_grad()
+        q1_loss.backward()
+        self.q1_optimizer.step()
+
+        self.q2_optimizer.zero_grad()
+        q2_loss.backward()
+        self.q2_optimizer.step()
+
+        actor_loss = -self.q1(states, self.actor(states)).mean()
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
+
+        for param, target_param in zip(self.q1.parameters(), self.q1_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        for param, target_param in zip(self.q2.parameters(), self.q2_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+    def save(self, path):
+        torch.save(self.actor.state_dict(), path)
+
+    def load(self, path):
+        self.actor.load_state_dict(torch.load(path, map_location=device))
